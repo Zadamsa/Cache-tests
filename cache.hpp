@@ -37,10 +37,11 @@
 #include <string>
 
 #include <array>
-#include <ipfixprobe/flowifc.hpp>
+#include "Packet.h"
+/*#include <ipfixprobe/flowifc.hpp>
 #include <ipfixprobe/options.hpp>
 #include <ipfixprobe/storage.hpp>
-#include <ipfixprobe/utils.hpp>
+#include <ipfixprobe/utils.hpp>*/
 
 namespace ipxp {
 
@@ -67,113 +68,10 @@ struct __attribute__((packed)) flow_key_v6 : public flow_key<16> {
     flow_key_v6& save_sorted(const Packet& pkt) noexcept;
 };
 
-#ifdef FLOW_CACHE_STATS
-static const constexpr bool PRINT_FLOW_CACHE_STATS = true;
-#else
-static const constexpr bool PRINT_FLOW_CACHE_STATS = false;
-#endif /* FLOW_CACHE_STATS */
-
-#ifdef IPXP_FLOW_CACHE_SIZE
-static const uint32_t DEFAULT_FLOW_CACHE_SIZE = IPXP_FLOW_CACHE_SIZE;
-#else
 static const uint32_t DEFAULT_FLOW_CACHE_SIZE = 17; // 131072 records total
-#endif /* IPXP_FLOW_CACHE_SIZE */
 
-#ifdef IPXP_FLOW_LINE_SIZE
-static const uint32_t DEFAULT_FLOW_LINE_SIZE = IPXP_FLOW_LINE_SIZE;
-#else
 static const uint32_t DEFAULT_FLOW_LINE_SIZE = 4; // 16 records per line
-#endif /* IPXP_FLOW_LINE_SIZE */
 
-class CacheOptParser : public OptionsParser {
-public:
-    uint32_t m_cache_size;
-    uint32_t m_line_size;
-    uint32_t m_active = 300;
-    uint32_t m_inactive = 30;
-    bool m_split_biflow;
-
-    CacheOptParser()
-        : OptionsParser("cache", "Storage plugin implemented as a hash table")
-        , m_cache_size(1 << DEFAULT_FLOW_CACHE_SIZE)
-        , m_line_size(1 << DEFAULT_FLOW_LINE_SIZE)
-        , m_split_biflow(false)
-    {
-        register_option(
-            "s",
-            "size",
-            "EXPONENT",
-            "Cache size exponent to the power of two",
-            [this](const char* arg) {
-                try {
-                    unsigned exp = str2num<decltype(exp)>(arg);
-                    if (exp < 4 || exp > 30) {
-                        throw PluginError("Flow cache size must be between 4 and 30");
-                    }
-                    m_cache_size = static_cast<uint32_t>(1) << exp;
-                } catch (std::invalid_argument& e) {
-                    return false;
-                }
-                return true;
-            },
-            OptionFlags::RequiredArgument);
-        register_option(
-            "l",
-            "line",
-            "EXPONENT",
-            "Cache line size exponent to the power of two",
-            [this](const char* arg) {
-                try {
-                    m_line_size = static_cast<uint32_t>(1) << str2num<decltype(m_line_size)>(arg);
-                    if (m_line_size < 1) {
-                        throw PluginError("Flow cache line size must be at least 1");
-                    }
-                } catch (std::invalid_argument& e) {
-                    return false;
-                }
-                return true;
-            },
-            OptionFlags::RequiredArgument);
-        register_option(
-            "a",
-            "active",
-            "TIME",
-            "Active timeout in seconds",
-            [this](const char* arg) {
-                try {
-                    m_active = str2num<decltype(m_active)>(arg);
-                } catch (std::invalid_argument& e) {
-                    return false;
-                }
-                return true;
-            },
-            OptionFlags::RequiredArgument);
-        register_option(
-            "i",
-            "inactive",
-            "TIME",
-            "Inactive timeout in seconds",
-            [this](const char* arg) {
-                try {
-                    m_inactive = str2num<decltype(m_inactive)>(arg);
-                } catch (std::invalid_argument& e) {
-                    return false;
-                }
-                return true;
-            },
-            OptionFlags::RequiredArgument);
-        register_option(
-            "S",
-            "split",
-            "",
-            "Split biflows into uniflows",
-            [this](const char* arg) {
-                m_split_biflow = true;
-                return true;
-            },
-            OptionFlags::NoArgument);
-    }
-};
 
 class FlowRecord {
     uint64_t m_hash;
@@ -194,18 +92,18 @@ public:
 };
 
 template<bool NEED_FLOW_CACHE_STATS = false>
-class NHTFlowCache : public StoragePlugin {
+class NHTFlowCache  {
 public:
     NHTFlowCache();
-    ~NHTFlowCache() override;
-    void init(const char* params) override;
-    void close() override;
-    void set_queue(ipx_ring_t* queue) override;
-    OptionsParser* get_parser() const override { return new CacheOptParser(); }
-    std::string get_name() const override { return "cache"; }
+    virtual ~NHTFlowCache() ;
+    virtual void init(const char* params) ;
+    void close() ;
+    //void set_queue(ipx_ring_t* queue) override;
+    //OptionsParser* get_parser() const override { return new CacheOptParser(); }
+    //std::string get_name() const override { return "cache"; }
 
-    int put_pkt(Packet& pkt) override;
-    void export_expired(time_t ts) override;
+    virtual int put_pkt(Packet& pkt) ;
+    void export_expired(time_t ts) ;
 
 protected:
     uint32_t m_cache_size;
@@ -219,8 +117,8 @@ protected:
     uint32_t m_inactive;
     bool m_split_biflow;
     uint8_t m_keylen;
-    char m_key[max<size_t>(sizeof(flow_key_v4), sizeof(flow_key_v6))];
-    char m_key_inv[max<size_t>(sizeof(flow_key_v4), sizeof(flow_key_v6))];
+    char m_key[100];
+    char m_key_inv[100];
     std::unique_ptr<FlowRecord*[]> m_flow_table;
     std::unique_ptr<FlowRecord[]> m_flow_records;
 
@@ -228,8 +126,8 @@ protected:
     virtual bool create_hash_key(const Packet& pkt) noexcept;
     void export_flow(size_t index);
     static uint8_t get_export_reason(Flow& flow);
-    void finish() override;
-    void get_opts_from_parser(const CacheOptParser& parser);
+    void finish();
+    //void get_opts_from_parser(const CacheOptParser& parser);
 
     std::pair<bool, uint32_t>
     find_existing_record(uint32_t begin_line, uint32_t end_line, uint64_t hashval) const noexcept;
@@ -256,6 +154,9 @@ protected:
 };
 template<>
 class NHTFlowCache<true> : public NHTFlowCache<false> {
+public:
+    NHTFlowCache();
+    ~NHTFlowCache() override;
     uint64_t m_empty;
     uint64_t m_not_empty;
     uint64_t m_hits;
@@ -267,7 +168,7 @@ class NHTFlowCache<true> : public NHTFlowCache<false> {
     uint64_t m_sort_time;
     uint64_t m_copy_time;
     void init(const char* params) override;
-    ~NHTFlowCache() override;
+
     int put_pkt(Packet& pkt) override;
 
     uint32_t

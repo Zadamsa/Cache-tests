@@ -30,6 +30,8 @@
  *
  */
 
+#define XXH_INLINE_ALL 1
+
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -39,16 +41,12 @@
 #include "xxhash.h"
 #include <fstream>
 #include <iomanip>
-#include <ipfixprobe/ring.h>
-#include <rte_thash.h>
+#include <stdexcept>
+//#include <ipfixprobe/ring.h>
+//#include <rte_thash.h>
 
 namespace ipxp {
 
-__attribute__((constructor)) static void register_this_plugin() noexcept
-{
-    static PluginRecord rec = PluginRecord("cache", []() { return new NHTFlowCache<PRINT_FLOW_CACHE_STATS>(); });
-    register_plugin(&rec);
-}
 
 template<uint16_t IPSize>
 flow_key<IPSize>& flow_key<IPSize>::operator=(const Packet& pkt) noexcept
@@ -157,7 +155,7 @@ FlowRecord::~FlowRecord()
 
 void FlowRecord::erase()
 {
-    m_flow.remove_extensions();
+    //m_flow.remove_extensions();
     m_hash = 0;
     memset(&m_flow.time_first, 0, sizeof(m_flow.time_first));
     memset(&m_flow.time_last, 0, sizeof(m_flow.time_last));
@@ -176,7 +174,7 @@ void FlowRecord::erase()
 }
 void FlowRecord::reuse()
 {
-    m_flow.remove_extensions();
+    //m_flow.remove_extensions();
     m_flow.time_first = m_flow.time_last;
     m_flow.src_packets = 0;
     m_flow.dst_packets = 0;
@@ -274,7 +272,11 @@ NHTFlowCache<NEED_FLOW_CACHE_STATS>::NHTFlowCache()
     , m_flow_table(nullptr)
     , m_flow_records(nullptr)
 {
-    test_attributes();
+    //test_attributes();
+}
+NHTFlowCache<true>::NHTFlowCache():NHTFlowCache<false>()
+{
+    ;
 }
 
 template<bool NEED_FLOW_CACHE_STATS>
@@ -290,25 +292,8 @@ NHTFlowCache<true>::~NHTFlowCache()
     NHTFlowCache::close();
 }
 
-template<bool NEED_FLOW_CACHE_STATS>
-void NHTFlowCache<NEED_FLOW_CACHE_STATS>::test_attributes()
-{
-    static_assert(
-        std::is_unsigned<decltype(DEFAULT_FLOW_CACHE_SIZE)>(),
-        "Static checks of default cache sizes won't properly work without unsigned type.");
-    static_assert(
-        bitcount<decltype(DEFAULT_FLOW_CACHE_SIZE)>(-1) > DEFAULT_FLOW_CACHE_SIZE,
-        "Flow cache size is too big to fit in variable!");
-    static_assert(
-        bitcount<decltype(DEFAULT_FLOW_LINE_SIZE)>(-1) > DEFAULT_FLOW_LINE_SIZE,
-        "Flow cache line size is too big to fit in variable!");
-    static_assert(DEFAULT_FLOW_LINE_SIZE >= 1, "Flow cache line size must be at least 1!");
-    static_assert(
-        DEFAULT_FLOW_CACHE_SIZE >= DEFAULT_FLOW_LINE_SIZE,
-        "Flow cache size must be at least cache line size!");
-}
 
-template<bool NEED_FLOW_CACHE_STATS>
+/*template<bool NEED_FLOW_CACHE_STATS>
 void NHTFlowCache<NEED_FLOW_CACHE_STATS>::get_opts_from_parser(const CacheOptParser& parser)
 {
     m_cache_size = parser.m_cache_size;
@@ -316,25 +301,32 @@ void NHTFlowCache<NEED_FLOW_CACHE_STATS>::get_opts_from_parser(const CacheOptPar
     m_active = parser.m_active;
     m_inactive = parser.m_inactive;
     m_split_biflow = parser.m_split_biflow;
-}
+}*/
 
 template<bool NEED_FLOW_CACHE_STATS>
 void NHTFlowCache<NEED_FLOW_CACHE_STATS>::init(const char* params)
 {
-    CacheOptParser parser;
+    /*CacheOptParser parser;
     try {
         parser.parse(params);
     } catch (ParserError& e) {
         throw PluginError(e.what());
     }
 
-    get_opts_from_parser(parser);
+    get_opts_from_parser(parser);*/
+
+    m_cache_size = 1 << 17;
+    m_line_size = 1 << 4;
+    m_active = 300;
+    m_inactive = 30;
+    m_split_biflow = false;
+
     m_qidx = 0;
     m_timeout_idx = 0;
     m_line_mask = (m_cache_size - 1) & ~(m_line_size - 1);
     m_line_new_idx = m_line_size / 2;
 
-    if (m_export_queue == nullptr) {
+    /*if (m_export_queue == nullptr) {
         throw PluginError("output queue must be set before init");
     }
 
@@ -343,7 +335,7 @@ void NHTFlowCache<NEED_FLOW_CACHE_STATS>::init(const char* params)
     }
     if (m_cache_size == 0) {
         throw PluginError("flow cache won't properly work with 0 records");
-    }
+    }*/
 
     try {
         m_flow_table = std::unique_ptr<FlowRecord*[]>(new FlowRecord*[m_cache_size + m_qsize]);
@@ -352,7 +344,7 @@ void NHTFlowCache<NEED_FLOW_CACHE_STATS>::init(const char* params)
             m_flow_table[i] = &m_flow_records[i];
         }
     } catch (std::bad_alloc& e) {
-        throw PluginError("not enough memory for flow cache allocation");
+        throw std::invalid_argument("not enough memory for flow cache allocation");
     }
 }
 void NHTFlowCache<true>::init(const char* params)
@@ -374,17 +366,17 @@ void NHTFlowCache<NEED_FLOW_CACHE_STATS>::close()
     m_flow_table.reset();
 }
 
-template<bool NEED_FLOW_CACHE_STATS>
+/*template<bool NEED_FLOW_CACHE_STATS>
 void NHTFlowCache<NEED_FLOW_CACHE_STATS>::set_queue(ipx_ring_t* queue)
 {
     m_export_queue = queue;
     m_qsize = ipx_ring_size(queue);
-}
+}*/
 
 template<bool NEED_FLOW_CACHE_STATS>
 void NHTFlowCache<NEED_FLOW_CACHE_STATS>::export_flow(size_t index)
 {
-    ipx_ring_push(m_export_queue, &m_flow_table[index]->m_flow);
+    //ipx_ring_push(m_export_queue, &m_flow_table[index]->m_flow);
     std::swap(m_flow_table[index], m_flow_table[m_cache_size + m_qidx]);
     m_flow_table[index]->erase();
     m_qidx = (m_qidx + 1) % m_qsize;
@@ -401,7 +393,7 @@ void NHTFlowCache<NEED_FLOW_CACHE_STATS>::finish()
 template<bool NEED_FLOW_CACHE_STATS>
 void NHTFlowCache<NEED_FLOW_CACHE_STATS>::prepare_and_export(uint32_t flow_index) noexcept
 {
-    plugins_pre_export(m_flow_table[flow_index]->m_flow);
+    //plugins_pre_export(m_flow_table[flow_index]->m_flow);
     m_flow_table[flow_index]->m_flow.end_reason
         = get_export_reason(m_flow_table[flow_index]->m_flow);
     export_flow(flow_index);
@@ -412,7 +404,7 @@ void NHTFlowCache<NEED_FLOW_CACHE_STATS>::prepare_and_export(
     uint32_t flow_index,
     uint32_t reason) noexcept
 {
-    plugins_pre_export(m_flow_table[flow_index]->m_flow);
+    //plugins_pre_export(m_flow_table[flow_index]->m_flow);
     m_flow_table[flow_index]->m_flow.end_reason = reason;
     export_flow(flow_index);
 }
@@ -439,23 +431,23 @@ void NHTFlowCache<NEED_FLOW_CACHE_STATS>::flush(
     if (ret == FLOW_FLUSH_WITH_REINSERT) {
         FlowRecord* flow = m_flow_table[flow_index];
         flow->m_flow.end_reason = FLOW_END_FORCED;
-        ipx_ring_push(m_export_queue, &flow->m_flow);
+        //ipx_ring_push(m_export_queue, &flow->m_flow);
 
         std::swap(m_flow_table[flow_index], m_flow_table[m_cache_size + m_qidx]);
 
         flow = m_flow_table[flow_index];
-        flow->m_flow.remove_extensions();
+        //flow->m_flow.remove_extensions();
         *flow = *m_flow_table[m_cache_size + m_qidx];
         m_qidx = (m_qidx + 1) % m_qsize;
 
-        flow->m_flow.m_exts = nullptr;
+        //flow->m_flow.m_exts = nullptr;
         flow->reuse(); // Clean counters, set time first to last
         flow->update(pkt, source_flow); // Set new counters from packet
 
-        ret = plugins_post_create(flow->m_flow, pkt);
+        /*ret = plugins_post_create(flow->m_flow, pkt);
         if (ret & FLOW_FLUSH) {
             flush(pkt, flow_index, ret, source_flow);
-        }
+        }*/
     } else {
         m_flow_table[flow_index]->m_flow.end_reason = FLOW_END_FORCED;
         export_flow(flow_index);
@@ -577,11 +569,11 @@ bool NHTFlowCache<NEED_FLOW_CACHE_STATS>::create_new_flow(
     uint64_t hashval) noexcept
 {
     m_flow_table[flow_index]->create(pkt, hashval);
-    auto ret = plugins_post_create(m_flow_table[flow_index]->m_flow, pkt);
+    /*auto ret = plugins_post_create(m_flow_table[flow_index]->m_flow, pkt);
     if (ret & FLOW_FLUSH) {
         export_flow(flow_index);
         return true;
-    }
+    }*/
     return false;
 }
 bool NHTFlowCache<true>::create_new_flow(
@@ -599,28 +591,70 @@ bool NHTFlowCache<NEED_FLOW_CACHE_STATS>::flush_and_update_flow(
     uint32_t flow_index,
     Packet& pkt) noexcept
 {
-    auto ret = plugins_pre_update(m_flow_table[flow_index]->m_flow, pkt);
-    if (ret & FLOW_FLUSH) {
+    //auto ret = plugins_pre_update(m_flow_table[flow_index]->m_flow, pkt);
+    /*if (ret & FLOW_FLUSH) {
         flush(pkt, flow_index, ret, pkt.source_pkt);
         return true;
-    } else {
+    } else {*/
         m_flow_table[flow_index]->update(pkt, pkt.source_pkt);
-        ret = plugins_post_update(m_flow_table[flow_index]->m_flow, pkt);
+        /*ret = plugins_post_update(m_flow_table[flow_index]->m_flow, pkt);
         if (ret & FLOW_FLUSH) {
             flush(pkt, flow_index, ret, pkt.source_pkt);
             return true;
         }
-    }
+    }*/
     return false;
 }
 template<bool NEED_FLOW_CACHE_STATS>
 uint32_t NHTFlowCache<NEED_FLOW_CACHE_STATS>::toeplitzHash(const Packet& pkt) const noexcept{
-    if (pkt.ip_proto == IP::v4){
-
-    }else if (pkt.ip_proto == IP::v6){
-
-    }
-    return 666;
+    /*rte_thash_tuple tuple = {0};
+    if (pkt.ip_version == IP::v4){
+        if (!m_split_biflow){
+            if (pkt.src_ip.v4 <= pkt.dst_ip.v4){
+                tuple.v4.src_addr = pkt.src_ip.v4;
+                tuple.v4.dst_addr = pkt.dst_ip.v4;
+                tuple.v4.sport = pkt.src_port;
+                tuple.v4.dport = pkt.dst_port;
+            }else{
+                tuple.v4.src_addr = pkt.dst_ip.v4;
+                tuple.v4.dst_addr = pkt.src_ip.v4;
+                tuple.v4.sport = pkt.dst_port;
+                tuple.v4.dport = pkt.src_port;
+            }
+        }else{
+            tuple.v4.src_addr = pkt.src_ip.v4;
+            tuple.v4.dst_addr = pkt.dst_ip.v4;
+            tuple.v4.sport = pkt.src_port;
+            tuple.v4.dport = pkt.dst_port;
+        }
+        return rte_softrss_be((uint32_t*)&tuple.v4, RTE_THASH_V4_L3_LEN,(uint8_t*)m_rss_key);
+    }else if (pkt.ip_version == IP::v6){
+        //m_rss_key;
+        rte_ipv6_hdr hdr = {0};
+        if (!m_split_biflow){
+            if (strncmp((const char*)pkt.src_ip.v6,(const char*)pkt.dst_ip.v6,16) <= 0){
+                memcpy(hdr.src_addr, pkt.src_ip.v6,16);
+                memcpy(hdr.dst_addr, pkt.dst_ip.v6,16);
+                rte_thash_load_v6_addrs(&hdr,(rte_thash_tuple*)&tuple.v6);
+                tuple.v6.sport = pkt.src_port;
+                tuple.v6.dport = pkt.dst_port;
+            }else{
+                memcpy(hdr.src_addr, pkt.dst_ip.v6,16);
+                memcpy(hdr.dst_addr, pkt.src_ip.v6,16);
+                rte_thash_load_v6_addrs(&hdr,(rte_thash_tuple*)&tuple.v6);
+                tuple.v6.sport = pkt.dst_port;
+                tuple.v6.dport = pkt.src_port;
+            }
+        }else{
+            memcpy(hdr.src_addr, pkt.src_ip.v6,16);
+            memcpy(hdr.dst_addr, pkt.dst_ip.v6,16);
+            rte_thash_load_v6_addrs(&hdr,(rte_thash_tuple*)&tuple.v6);
+            tuple.v6.sport = pkt.src_port;
+            tuple.v6.dport = pkt.dst_port;
+        }
+        return rte_softrss_be((uint32_t*)&tuple.v6, RTE_THASH_V6_L3_LEN,(uint8_t*)m_rss_key);
+    }*/
+    return 0;
 }
 template<bool NEED_FLOW_CACHE_STATS>
 uint32_t NHTFlowCache<NEED_FLOW_CACHE_STATS>::my_hash(Packet& pkt) const noexcept{
@@ -632,17 +666,17 @@ uint32_t NHTFlowCache<NEED_FLOW_CACHE_STATS>::my_hash(Packet& pkt) const noexcep
 template<bool NEED_FLOW_CACHE_STATS>
 int NHTFlowCache<NEED_FLOW_CACHE_STATS>::put_pkt(Packet& pkt)
 {
-    plugins_pre_create(pkt);
+    //plugins_pre_create(pkt);
 
     if (!create_hash_key(pkt))
         return 0;
     /* Calculates hash value from key created before. */
-    //uint64_t hashval = XXH64(m_key, m_keylen, 0);
+    uint64_t hashval = XXH64(m_key, m_keylen, 0);
     //uint32_t hashval = toeplitzHash(pkt);
     //uint32_t hashval = aes(pkt);
-    uint32_t hashval = toeplitzHash(pkt);
-    if (hashval ==666)
-        return 0;
+    //uint32_t hashval = toeplitzHash(pkt);
+    //if (hashval ==666)
+    //    return 0;
     //std::cerr<< hashval << std::endl;
 
     bool source_flow = true;
@@ -657,8 +691,8 @@ int NHTFlowCache<NEED_FLOW_CACHE_STATS>::put_pkt(Packet& pkt)
 
     /* Find inversed flow. */
     if (!found && !m_split_biflow) {
-        //uint64_t hashval_inv = XXH64(m_key_inv, m_keylen, 0);
-        uint32_t hashval_inv = toeplitzHash(pkt);
+        uint64_t hashval_inv = XXH64(m_key_inv, m_keylen, 0);
+        //uint32_t hashval_inv = toeplitzHash(pkt);
         uint64_t line_index_inv = hashval_inv & m_line_mask;
         uint64_t next_line_inv = line_index_inv + m_line_size;
         res = find_existing_record(line_index_inv, next_line_inv, hashval_inv);
@@ -674,9 +708,9 @@ int NHTFlowCache<NEED_FLOW_CACHE_STATS>::put_pkt(Packet& pkt)
     /* Existing flow record was found, put flow record at the first index of flow line. */
     if (found) {
         flow_index = enhance_existing_flow_record(flow_index, line_index);
+    } else {
         /* Existing flow record was not found. Find free place in flow line or replace some existing
          * record. */
-    } else {
         res = find_empty_place(line_index, next_line);
         bool empty_place_found = res.first;
         flow_index = res.second;
