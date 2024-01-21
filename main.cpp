@@ -11,7 +11,7 @@
 #include <ProtocolType.h>
 #include <string>
 #include "cache.hpp"
-
+#include <chrono>
 #include <iostream>
 using namespace pcpp;
 class Analyzer{
@@ -148,6 +148,9 @@ int main(int argc, char** argv){
     Analyzer a;
     if (argc < 2)
         return -1;
+    auto start = std::chrono::high_resolution_clock::now();
     a.start(argv[1]);
+    std::cout << "Total time = " <<
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() << " us" << std::endl;
     return 0;
 }
