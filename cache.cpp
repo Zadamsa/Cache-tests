@@ -265,7 +265,8 @@ NHTFlowCache<NEED_FLOW_CACHE_STATS>::NHTFlowCache()
     , m_timeout_idx(0)
     , m_active(0)
     , m_inactive(0)
-    , m_split_biflow(false)
+    //, m_split_biflow(false)
+    , m_split_biflow(true)
     , m_keylen(0)
     , m_key()
     , m_key_inv()
@@ -321,6 +322,8 @@ void NHTFlowCache<NEED_FLOW_CACHE_STATS>::init(const char* params)
     m_active = 300;
     m_inactive = 30;
     m_split_biflow = false;
+    //m_split_biflow = true;
+    m_qsize = 2;
 
     m_qidx = 0;
     m_timeout_idx = 0;
@@ -691,7 +694,7 @@ int NHTFlowCache<NEED_FLOW_CACHE_STATS>::put_pkt(Packet& pkt)
     uint32_t flow_index = res.second;
 
     /* Find inversed flow. */
-    if (!found && !m_split_biflow) {
+    /*if (!found && !m_split_biflow) {
         uint64_t hashval_inv = XXH64(m_key_inv, m_keylen, 0);
         //uint32_t hashval_inv = toeplitzHash(pkt);
         uint64_t line_index_inv = hashval_inv & m_line_mask;
@@ -704,7 +707,7 @@ int NHTFlowCache<NEED_FLOW_CACHE_STATS>::put_pkt(Packet& pkt)
             hashval = hashval_inv;
             line_index = line_index_inv;
         }
-    }
+    }*/
 
     /* Existing flow record was found, put flow record at the first index of flow line. */
     if (found) {
@@ -800,7 +803,7 @@ bool NHTFlowCache<NEED_FLOW_CACHE_STATS>::create_hash_key(const Packet& pkt) noe
         auto key_v6_inv = reinterpret_cast<struct flow_key_v6*>(m_key_inv);
         if (m_split_biflow) {
             *key_v6 = pkt;
-            key_v6_inv->save_reversed(pkt);
+            //key_v6_inv->save_reversed(pkt);
         }else
             key_v6->save_sorted(pkt);
         m_keylen = sizeof(flow_key_v6);
