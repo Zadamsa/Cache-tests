@@ -52,13 +52,14 @@ public:
         }else return;
         ipxp_pkt.vlan_id = 0;
 
+        ipxp_pkt.src_port = ipxp_pkt.dst_port = 0;
         if (auto tcpLayer = parsedPacket.getLayerOfType<TcpLayer>()){
             ipxp_pkt.src_port = tcpLayer->getTcpHeader()->portSrc;
             ipxp_pkt.dst_port = tcpLayer->getTcpHeader()->portDst;
         } else if (auto udpLayer = parsedPacket.getLayerOfType<UdpLayer>()){
             ipxp_pkt.src_port = udpLayer->getUdpHeader()->portSrc;
             ipxp_pkt.dst_port = udpLayer->getUdpHeader()->portDst;
-        }else return;
+        }
 
         m_cache.put_pkt(ipxp_pkt);
         /*Flow flow;

@@ -273,10 +273,11 @@ NHTFlowCache<NEED_FLOW_CACHE_STATS>::NHTFlowCache()
     , m_flow_records(nullptr)
 {
     //test_attributes();
+
 }
 NHTFlowCache<true>::NHTFlowCache():NHTFlowCache<false>()
 {
-    ;
+    m_put_time = m_copy_time = 0;
 }
 
 template<bool NEED_FLOW_CACHE_STATS>
