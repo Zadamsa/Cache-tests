@@ -89,7 +89,7 @@ flow_key_v4& flow_key_v4::save_sorted(const Packet& pkt) noexcept
 {
     flow_key::operator=(pkt);
     ip_version = IP::v4;
-    if ( *reinterpret_cast<uint32_t*>(src_ip.data()) < *reinterpret_cast<uint32_t*>(dst_ip.data())) {
+    /*if ( *reinterpret_cast<uint32_t*>(src_ip.data()) < *reinterpret_cast<uint32_t*>(dst_ip.data())) {
         memcpy(src_ip.data(), &pkt.src_ip.v4, 4);
         memcpy(dst_ip.data(), &pkt.dst_ip.v4, 4);
     }else{
@@ -98,7 +98,11 @@ flow_key_v4& flow_key_v4::save_sorted(const Packet& pkt) noexcept
         auto tmp = src_port;
         src_port = dst_port;
         dst_port = tmp;
-    }
+    }*/
+    src_port = dst_port = src_port ^ dst_port;
+    uint32_t ip_xor = pkt.src_ip.v4 ^ pkt.dst_ip.v4;
+    memcpy(src_ip.data(), &ip_xor, 4);
+    memcpy(dst_ip.data(), &ip_xor, 4);
     return *this;
 }
 
@@ -125,7 +129,7 @@ flow_key_v6& flow_key_v6::save_sorted(const Packet& pkt) noexcept
     flow_key::operator=(pkt);
     ip_version = IP::v6;
     //Compare 2 ipv6 addresses from end to begin
-    if ( [](const uint8_t* addr1,const  uint8_t* addr2)->int8_t {
+    /*if ( [](const uint8_t* addr1,const  uint8_t* addr2)->int8_t {
         for (auto i = 0; i < 16 ; i++)
             if (addr1[15-i] != addr2[15-i])
                 return (int8_t)(addr1[15-i] - addr2[15-i]);
@@ -139,7 +143,13 @@ flow_key_v6& flow_key_v6::save_sorted(const Packet& pkt) noexcept
         auto tmp = src_port;
         src_port = dst_port;
         dst_port = tmp;
-    }
+    }*/
+    src_port = dst_port = src_port ^ dst_port;
+    uint8_t ip_xor[16];
+    for(uint8_t i = 0; i < 16; i++)
+        ip_xor[i] = pkt.dst_ip.v6[i] ^ pkt.src_ip.v6[i];
+    memcpy(src_ip.data(), ip_xor, 16);
+    memcpy(dst_ip.data(), ip_xor, 16);
     return *this;
 }
 
