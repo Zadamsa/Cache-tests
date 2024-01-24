@@ -13,28 +13,13 @@
 #include "cache.hpp"
 #include <chrono>
 #include <iostream>
+#include <deque>
+#include <mutex>
 using namespace pcpp;
-class Analyzer{
-public:
-    ipxp::NHTFlowCache<true> m_cache;
-    Analyzer(): m_cache(){
-        //m_cache = ipxp::NHTFlowCache<true>();
-        m_cache.init(nullptr);
-    }
 
-    void start(std::string filename) noexcept{
-        PcapFileReaderDevice sniffer(filename);
-        if (!sniffer.open()) {
-            std::cerr << "Failed to open file: " << filename << std::endl;
-            return;
-        }
-        pcpp::RawPacket packet;
-        while(sniffer.getNextPacket(packet)){
-            processPackets(packet);
-        }
-
-    }
-    void processPackets(pcpp::RawPacket& packet){
+class PacketConverter{
+protected:
+    ipxp::Packet createPacket(pcpp::RawPacket& packet) {
         ipxp::Packet ipxp_pkt = {0};
         pcpp::Packet parsedPacket(&packet);
 
@@ -60,87 +45,88 @@ public:
             ipxp_pkt.src_port = udpLayer->getUdpHeader()->portSrc;
             ipxp_pkt.dst_port = udpLayer->getUdpHeader()->portDst;
         }
+        return ipxp_pkt;
+    }
+};
 
-        m_cache.put_pkt(ipxp_pkt);
-        /*Flow flow;
-        Packet parsedPacket(rawPacket);
 
-        // Extracting the IP layer
-        auto ipLayer = parsedPacket.getLayerOfType<IPv4Layer>();
-        if (!ipLayer) {
-            m_packet_count_not_ip++;
-            return true;
-        }
+class Analyzer: public PacketConverter{
+public:
+    ipxp::NHTFlowCache<true> m_cache;
 
-        m_packet_count_ip++;
-        flow.src_ip = ipLayer->getSrcIPAddress();
-        flow.dst_ip = ipLayer->getDstIPAddress();
 
-        size_t packetSize = 0;
-        ProtocolType transportType = UnknownProtocol;
-
-        // Extracting the transport layer
-        if (auto tcpLayer = parsedPacket.getLayerOfType<TcpLayer>()) {
-            flow.src_port = tcpLayer->getSrcPort();
-            flow.dst_port = tcpLayer->getDstPort();
-            packetSize = tcpLayer->getDataLen();
-            m_tcp_bytes += packetSize;
-            transportType = TCP;
-            m_flow_count_TCP++;
-            m_tcp_packets++;
-        } else if (auto udpLayer = parsedPacket.getLayerOfType<UdpLayer>()) {
-            flow.src_port = udpLayer->getSrcPort();
-            flow.dst_port = udpLayer->getDstPort();
-            packetSize = udpLayer->getDataLen();
-            m_udp_bytes += packetSize;
-            transportType = UDP;
-            m_flow_count_UDP++;
-            m_udp_packets++;
-        } else {
-            flow.src_port = flow.dst_port = 0;
-        }
-        auto last_layer =  parsedPacket.getLastLayer();
-        if (last_layer->getProtocol() == PacketTrailer || last_layer->getProtocol() == GenericPayload)
-            last_layer = last_layer->getPrevLayer() == nullptr ? last_layer : last_layer->getPrevLayer();
-        if (auto searchIt = m_flows.find(flow); searchIt != m_flows.end()) {
-            if (searchIt->first.src_ip == flow.src_ip && searchIt->first.src_port == flow.src_port) {
-                searchIt->second.src_packets++;
-                searchIt->second.src_bytes += packetSize;
-            } else {
-                searchIt->second.dst_packets++;
-                searchIt->second.dst_bytes += packetSize;
-            }
-            if (last_layer->getOsiModelLayer() > searchIt->second.osi_layer &&
-                ( last_layer->getOsiModelLayer() != OsiModelLayerUnknown || searchIt->second.osi_layer == OsiModelLayerUnknown )) {
-                searchIt->second.osi_layer = last_layer->getOsiModelLayer();
-                searchIt->second.last_type = last_layer->getProtocol();
-            }
-        } else {
-            if (packetSize == 0)
-                packetSize = parsedPacket.getRawPacketReadOnly()->getRawDataLen();
-            FlowData fd(1, 0, packetSize, 0);
-            fd.last_type = last_layer->getProtocol();
-            fd.transport_type = transportType;
-            m_flows.emplace(flow,fd);
-        }
-        auto tcp_layer = parsedPacket.getLayerOfType<TcpLayer>();
-        if (!tcp_layer || !m_export_rows)
-            return true;
-        auto ipv4_layer = parsedPacket.getLayerOfType<IPv4Layer>();
-        auto ipv6_layer = parsedPacket.getLayerOfType<IPv6Layer>();
-        auto tcp_header = tcp_layer->getTcpHeader();
-        export_row(m_flows.find(flow)->second);
-        if (ipv4_layer) {
-            auto ip_header = ipv4_layer->getIPv4Header();
-            m_flows.find(flow)->second.last_tcp_data = FlowData::LastTCPData(ip_header->totalLength,extractFlags(*tcp_header),ntohs(tcp_header->windowSize),ip_header->protocol);
-        }else {
-            auto ip_header = ipv6_layer->getIPv6Header();
-            m_flows.find(flow)->second.last_tcp_data = FlowData::LastTCPData(ip_header->payloadLength,extractFlags(*tcp_header),ntohs(tcp_header->windowSize),ip_header->nextHeader);
-        }
-        m_flows.find(flow)->second.last_access = m_packet_count;
-        return true;*/
+    Analyzer(): m_cache(){
+        //m_cache = ipxp::NHTFlowCache<true>();
+        m_cache.init(nullptr);
     }
 
+    void start(std::string filename) noexcept{
+        PcapFileReaderDevice sniffer(filename);
+        if (!sniffer.open()) {
+            std::cerr << "Failed to open file: " << filename << std::endl;
+            return;
+        }
+        pcpp::RawPacket packet;
+        while(sniffer.getNextPacket(packet)){
+            m_cache.put_pkt(createPacket(packet));
+        }
+    }
+
+
+};
+
+class GASearcher : public PacketConverter{
+    std::deque<std::pair<ipxp::Packet,uint8_t>> m_queue;
+    std::mutex m_queue_mutex;
+    std::array<uint32_t,4> m_results;
+    std::atomic<bool> m_exit = false;
+    std::condition_variable m_cond;
+    uint8_t m_thread_count = 4;
+    std::vector<std::thread> m_threads;
+
+    void start(std::string filename) noexcept{
+        PcapFileReaderDevice sniffer(filename);
+        if (!sniffer.open()) {
+            std::cerr << "Failed to open file: " << filename << std::endl;
+            return;
+        }
+
+        std::thread packet_reader([this](){ convertPackets();});
+        for(int i = 0; i < m_thread_count; i++)
+            m_threads
+    }
+    void convertPackets(){
+
+        pcpp::RawPacket packet;
+        while(!m_exit){
+            std::unique_lock ul(m_queue_mutex);
+            m_cond.wait(ul, [this,thread_count](){return m_queue.back().second == m_thread_count;});
+            while(m_queue.front().second == m_thread_count)
+                m_queue.pop_front();
+            while(sniffer.getNextPacket(packet) && m_queue.size() < 10000)
+                m_queue.emplace_back(createPacket(packet),0);
+
+            if (m_queue.size() >= 10000)
+                m_exit = true;
+            ul.unlock();
+        }
+    }
+    void mutateConfiguration(const GAConfiguration& original_configuration, uint8_t thread_number){
+        GAConfiguration configuration = original_configuration.mutate();
+        while(configuration == original_configuration)
+            configuration = original_configuration.mutate();
+        ipxp::NHTFlowCache<true> cache(configuration);
+        while(!m_exit){
+            std::unique_lock ul(m_queue_mutex);
+            ul.unlock();
+            for(auto& val: m_queue){
+                m_cache.put_pkt(val.first);
+                val.second++;
+            }
+            m_cond.notify_one();
+        }
+        m_results[thread_number] = cache.m_not_empty;
+    }
 };
 
 

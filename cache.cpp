@@ -255,7 +255,7 @@ void FlowRecord::update(const Packet& pkt, bool src)
 }
 
 template<bool NEED_FLOW_CACHE_STATS>
-NHTFlowCache<NEED_FLOW_CACHE_STATS>::NHTFlowCache()
+NHTFlowCache<NEED_FLOW_CACHE_STATS>::NHTFlowCache(const GAConfiguration& configuration)
     : m_cache_size(0)
     , m_line_size(0)
     , m_line_mask(0)
@@ -272,8 +272,17 @@ NHTFlowCache<NEED_FLOW_CACHE_STATS>::NHTFlowCache()
     , m_key_inv()
     , m_flow_table(nullptr)
     , m_flow_records(nullptr)
+    , m_insert_pos(configuration.m_insert_pos)
 {
     //test_attributes();
+    uint16_t start = 0;
+    for(const auto& val : configuration.m_moves){
+        uint16_t target = val.m_value;
+        for(int i = start; i < start + val.m_count; i++){
+            m_configuration[i] = val.m_increment ? target++: target;
+        }
+        start += val.m_count;
+    }
 
 }
 NHTFlowCache<true>::NHTFlowCache():NHTFlowCache<false>()
@@ -318,7 +327,7 @@ void NHTFlowCache<NEED_FLOW_CACHE_STATS>::init(const char* params)
     get_opts_from_parser(parser);*/
 
     m_cache_size = 1 << 17;
-    m_line_size = 1 << 4;
+    m_line_size = 1 << 5;
     m_active = 300;
     m_inactive = 30;
     m_split_biflow = false;

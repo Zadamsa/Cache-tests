@@ -38,6 +38,7 @@
 
 #include <array>
 #include "Packet.h"
+#include <stdexcept>
 /*#include <ipfixprobe/flowifc.hpp>
 #include <ipfixprobe/options.hpp>
 #include <ipfixprobe/storage.hpp>
@@ -91,10 +92,85 @@ public:
     void update(const Packet& pkt, bool src);
 };
 
+struct GAConfiguration{
+    //std::array<uint8_t,32> m_moves;
+
+    struct MovePair{
+        uint8_t m_count;
+        uint8_t m_value;
+        bool m_increment = false;
+    };
+    std::array<MovePair,8> m_moves;
+    uint16_t m_insert_pos;
+
+    std::mt19937 m_rng;
+    std::uniform_int_distribution<std::mt19937::result_type> m_probability_dist(0,1000);
+    std::uniform_int_distribution<std::mt19937::result_type> m_pair_dist(0,7);
+    std::uniform_int_distribution<std::mt19937::result_type> m_count_dist(1,7);
+
+    GAConfiguration(std::initializer_list<uint8_t> values): m_rng(std::random_device()){
+        for( int i = 0; i < 32; i++)
+            m_moves[i] = values[i];
+    }
+
+    GAConfiguration(const GAConfiguration& gac): m_moves(gac.m_moves),m_rng(gac.m_rng){}
+
+    GAConfiguration(): m_rng(std::random_device()){
+        uint8_t max = 0;
+        for( int i = 0; i < 8; i++){
+            std::uniform_int_distribution<std::mt19937::result_type> moves_dist(0,max);
+            uint8_t count = m_count_dist(m_rng);
+            m_moves[i] = MovePair{count,moves_dist(m_rng)};
+            max += count;
+        }
+        fix_pairs();
+    }
+
+    GAConfiguration mutate() const{
+        GAConfiguration new_configuration = *this;
+        while(new_configuration == *this) {
+            new_configuration.mutate_pairs(0.2);
+            new_configuration.fix_pairs();
+            new_configuration.mutate_pairs_values(0.2);
+            new_configuration.mutate_insert_pos(0.2);
+        }
+    }
+
+    void mutate_pairs(float probability){
+        std::transform(m_moves.begin(), m_moves.end(), m_moves.begin(),[this,probability](MovePair& mp) {
+            return roll(probability) ? MovePair{m_count_dist(m_rng),mp.m_value} : mp;
+        });
+    }
+
+    void mutate_pairs_values(float probability){
+        uint32_t max = 0;
+        std::transform(m_moves.begin(), m_moves.end(), m_moves.begin(),[this,probability,&max](MovePair& mp) {
+            std::uniform_int_distribution<std::mt19937::result_type> dist(0,max);
+            if (roll(probability))
+                mp.m_value = dist(m_rng);
+            if (mp.m_count >= max)
+                mp.m_value = max;
+            max += mp.m_count;
+        });
+    }
+
+    void fix_pairs() noexcept{
+        while (uint8_t diff = std::accumulate(m_moves.begin(), m_moves.end(), 0,[](uint8_t sum, const MovePair& mp) { return sum + mp.m_count; }) - 32 )
+            m_moves[m_pair_dist(m_rng)].m_count += diff > 0 ? 1 : -1;
+    }
+
+    bool roll(double probability)const{
+        if (probability > 1 || probability < 0)
+            throw std::invalid_argument("Probability is not inside [0;1]");
+
+        return (float)m_probability_dist(m_rng)/1000 <= probability;
+    }
+};
+
 template<bool NEED_FLOW_CACHE_STATS = false>
 class NHTFlowCache  {
 public:
-    NHTFlowCache();
+    NHTFlowCache(const GAConfiguration& configuration);
     virtual ~NHTFlowCache() ;
     virtual void init(const char* params) ;
     void close() ;
@@ -121,6 +197,8 @@ protected:
     char m_key_inv[100];
     std::unique_ptr<FlowRecord*[]> m_flow_table;
     std::unique_ptr<FlowRecord[]> m_flow_records;
+    uint8_t m_configuration[32];
+    uint16_t m_insert_pos;
 
     virtual void flush(Packet& pkt, size_t flow_index, int ret, bool source_flow);
     virtual bool create_hash_key(const Packet& pkt) noexcept;
